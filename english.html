@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Loading…</title>
+  <style>
+    :root { --bg:#ffffff; --fg:#1b1f24; --muted:#5b6570; --card:#f4f6f8; --accent:#2f6fed; --border:#e2e6ea; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg:#14171a; --fg:#eceff2; --muted:#9aa5b1; --card:#1e2227; --accent:#6c9bff; --border:#2b3138; }
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, "Segoe UI", "Noto Sans Devanagari", "Noto Sans Arabic", sans-serif; background:var(--bg); color:var(--fg); line-height:1.6; }
+    header { position:sticky; top:0; background:var(--bg); border-bottom:1px solid var(--border); display:flex; flex-wrap:wrap; gap:12px 24px; align-items:center; padding:12px 16px; }
+    .brand { font-weight:700; font-size:1.2rem; margin-inline-end:auto; }
+    nav { display:flex; flex-wrap:wrap; gap:16px; }
+    nav a { color:var(--fg); text-decoration:none; }
+    nav a:hover { color:var(--accent); }
+    select { padding:6px 10px; border-radius:8px; border:1px solid var(--border); background:var(--card); color:var(--fg); font:inherit; }
+    #status { max-width:960px; margin:8px auto 0; padding:0 16px; color:var(--muted); font-size:.9rem; min-height:1.4em; }
+    #status.warn { color:#b45309; font-weight:600; }
+    #status.err { color:#c62828; font-weight:600; }
+    section { max-width:960px; margin:0 auto; padding:48px 16px; }
+    #home { text-align:center; padding-top:64px; }
+    h1 { font-size:clamp(1.8rem,5vw,3rem); margin:0 0 12px; }
+    h2 { margin:0 0 20px; }
+    .sub { color:var(--muted); font-size:1.1rem; }
+    .btn { display:inline-block; margin-top:24px; padding:12px 24px; background:var(--accent); color:#fff; border-radius:10px; text-decoration:none; font-weight:600; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:16px; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:20px; }
+    .card .icon { font-size:1.8rem; }
+    .card h3 { margin:8px 0 4px; }
+    .card p { margin:0; color:var(--muted); }
+    a.mail { color:var(--accent); }
+    footer { text-align:center; padding:24px 16px; color:var(--muted); border-top:1px solid var(--border); }
+    .error { max-width:640px; margin:60px auto; padding:16px; border:1px solid #d33; border-radius:10px; }
+    body.busy main { opacity:.5; transition:opacity .2s; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand" id="brand"></div>
+    <nav id="nav"></nav>
+    <select id="langSwitch" aria-label="Language"></select>
+  </header>
+  <div id="status" role="status" aria-live="polite"></div>
+  <main>
+    <section id="home"></section>
+    <section id="features"></section>
+    <section id="about"></section>
+    <section id="contact"></section>
+  </main>
+  <footer id="footer"></footer>
+
+<script>
+  /* Each language is read from its OWN json file (the ones Centroid generates).
+     Repo layout: english.json, hi/english.json, es/english.json (as Centroid commits them). Edit text there, refresh, and see if the layout breaks.
+     Nothing is translated live here, so what you see is exactly what is in the files. */
+  var FILES = {
+    en: 'english.json',
+    hi: 'hi/english.json',
+    es: 'es/english.json'
+  };
+  var LANGS = [
+    { code: 'en', label: 'English' },
+    { code: 'hi', label: 'हिन्दी' },
+    { code: 'es', label: 'Español' }
+  ];
+  var DEFAULT = 'en';
+  var fallbackEnglish = null;   // English content, used when a translated file is broken
+  var currentRequest = 0;
+
+  function el(tag, props, children) {
+    var n = document.createElement(tag);
+    Object.keys(props || {}).forEach(function (k) {
+      if (k === 'text') n.textContent = props[k]; else n.setAttribute(k, props[k]);
+    });
+    (children || []).forEach(function (c) { n.appendChild(c); });
+    return n;
+  }
+
+  async function loadFile(lang) {
+    // no-store so edits to the json show up on the next refresh / switch
+    var r = await fetch(encodeURI(FILES[lang]), { cache: 'no-store' });
+    if (!r.ok) throw new Error(FILES[lang] + ' -> HTTP ' + r.status);
+    var j;
+    try { j = await r.json(); } catch (e) { throw new Error(FILES[lang] + ' is not valid JSON (' + e.message + ')'); }
+    if (!j || !j.content) throw new Error(FILES[lang] + ' has no "content" object');
+    return j;
+  }
+
+  // Lists the keys a translated file is missing compared with English (a structure problem, not a layout one).
+  function missingKeys(base, test, path, out) {
+    if (base && typeof base === 'object') {
+      Object.keys(base).forEach(function (k) {
+        var p = path + '.' + k;
+        if (test == null || typeof test !== 'object' || !(k in test)) out.push(p);
+        else missingKeys(base[k], test[k], p, out);
+      });
+    }
+    return out;
+  }
+
+  function render(c, lang) {
+    document.documentElement.lang = lang;
+    document.title = c.title;
+    document.getElementById('brand').textContent = c.brand;
+
+    var nav = document.getElementById('nav');
+    nav.replaceChildren.apply(nav, c.nav.map(function (i) { return el('a', { href: '#' + i.target, text: i.label }); }));
+
+    document.getElementById('home').replaceChildren(
+      el('h1', { text: c.hero.heading }),
+      el('p', { class: 'sub', text: c.hero.subheading }),
+      el('a', { class: 'btn', href: '#features', text: c.hero.button })
+    );
+
+    document.getElementById('features').replaceChildren(
+      el('h2', { text: c.features.heading }),
+      el('div', { class: 'grid' }, c.features.items.map(function (it) {
+        return el('div', { class: 'card' }, [
+          el('div', { class: 'icon', text: it.icon }),
+          el('h3', { text: it.title }),
+          el('p', { text: it.text })
+        ]);
+      }))
+    );
+
+    document.getElementById('about').replaceChildren(
+      el('h2', { text: c.about.heading }),
+      el('p', { text: c.about.text })
+    );
+
+    document.getElementById('contact').replaceChildren(
+      el('h2', { text: c.contact.heading }),
+      el('p', { text: c.contact.text }),
+      el('a', { class: 'mail', href: 'mailto:' + c.contact.email, text: c.contact.email })
+    );
+
+    document.getElementById('footer').textContent = c.footer;
+  }
+
+  // Simple layout check: reports sideways page scroll and any box whose content is wider than the box.
+  function checkLayout() {
+    var problems = [];
+    var de = document.documentElement;
+    if (de.scrollWidth > de.clientWidth + 1) problems.push('page scrolls sideways (' + de.scrollWidth + 'px > ' + de.clientWidth + 'px)');
+    document.querySelectorAll('header *, main *, footer *').forEach(function (n) {
+      if (n.scrollWidth > n.clientWidth + 1 && n.clientWidth > 0 && getComputedStyle(n).display !== 'inline') {
+        problems.push((n.id ? '#' + n.id : n.tagName.toLowerCase() + (n.className ? '.' + n.className : '')) + ' content overflows its box');
+      }
+    });
+    return problems;
+  }
+
+  async function setLanguage(lang) {
+    var req = ++currentRequest;
+    var status = document.getElementById('status');
+    var sel = document.getElementById('langSwitch');
+    sel.value = lang;
+    status.className = ''; status.textContent = '';
+    document.body.classList.add('busy');
+    try {
+      var j = await loadFile(lang);
+      if (req !== currentRequest) return;
+      render(j.content, lang);
+
+      var notes = [], cls = '';
+      if (fallbackEnglish && lang !== 'en') {
+        var miss = missingKeys(fallbackEnglish.content, j.content, 'content', []);
+        if (miss.length) { notes.push('Missing keys: ' + miss.join(', ')); cls = 'err'; }
+      }
+      var layout = checkLayout();
+      if (layout.length) { notes.push('UI problems: ' + layout.join('; ')); cls = 'warn'; }
+      status.className = cls;
+      status.textContent = notes.join('  |  ');
+
+      try { localStorage.setItem('lang', lang); } catch (e) {}
+      var url = new URL(location.href); url.searchParams.set('lang', lang); history.replaceState(null, '', url);
+    } catch (err) {
+      if (req !== currentRequest) return;
+      if (fallbackEnglish) render(fallbackEnglish.content, 'en');
+      status.className = 'err';
+      status.textContent = 'Could not load ' + lang.toUpperCase() + ': ' + err.message + ' - showing English.';
+      sel.value = 'en';
+    } finally {
+      if (req === currentRequest) document.body.classList.remove('busy');
+    }
+  }
+
+  function pickLang() {
+    var codes = LANGS.map(function (l) { return l.code; });
+    var fromUrl = new URLSearchParams(location.search).get('lang');
+    var saved = null;
+    try { saved = localStorage.getItem('lang'); } catch (e) {}
+    return [fromUrl, saved, DEFAULT].find(function (c) { return c && codes.indexOf(c) !== -1; });
+  }
+
+  loadFile('en')
+    .then(function (en) {
+      fallbackEnglish = en;
+      var sel = document.getElementById('langSwitch');
+      LANGS.forEach(function (l) { sel.appendChild(el('option', { value: l.code, text: l.label })); });
+      sel.addEventListener('change', function () { setLanguage(sel.value); });
+      return setLanguage(pickLang());
+    })
+    .catch(function (err) {
+      document.body.replaceChildren(el('div', { class: 'error' }, [
+        el('strong', { text: 'Could not load english.json. ' }),
+        el('span', { text: 'Open this page through a local server (e.g. "python -m http.server"), not by double-clicking. Details: ' + err.message })
+      ]));
+    });
+</script>
+</body>
+</html>
